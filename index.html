@@ -25,10 +25,14 @@
     // ─────────────────────────────────────────────────────────────────────────────
 
     const TOPICS = [
+      { id: "decimal-to-binary", label: "Decimal → Binary", tag: "Conversion", component: () => <DecimalToBinary /> },
+      { id: "twos-complement", label: "Two's Complement", tag: "Binary", component: () => <TwosComplement /> },
       { id: "union-find", label: "Union-Find",    tag: "LC 684",  component: () => <UnionFindVisualizer /> },
       { id: "bit-ops",    label: "Bit Operations", tag: "Python",  component: () => <BitOps /> },
       // { id: "two-pointers", label: "Two Pointers", tag: "LC 15", component: () => <TwoPointers /> },
     ];
+
+    const DEFAULT_TOPIC_ID = "twos-complement";
 
     // ─────────────────────────────────────────────────────────────────────────────
     // NAV SHELL
@@ -93,7 +97,7 @@
     }
 
     function App() {
-      const [active, setActive] = useState(TOPICS[0].id);
+      const [active, setActive] = useState(DEFAULT_TOPIC_ID);
       const topic = TOPICS.find(t => t.id === active);
       const View = topic.component;
       return (
@@ -1023,6 +1027,885 @@
             <div style={{ marginTop: 24, textAlign: "center", color: "#2a2a2a", fontSize: 11, letterSpacing: 2 }}>
               BITS · MASKS · SHIFTS
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // VISUALIZER 3 — Two's Complement (Binary refresher + converter)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    function tcClamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
+
+    function tcDecToBits(dec) {
+      const byte = dec & 0xff;
+      return Array.from({ length: 8 }, (_, i) => (byte >> (7 - i)) & 1);
+    }
+
+    function tcBitsToDec(bits) {
+      const unsigned = bits.reduce((acc, b) => (acc << 1) | b, 0);
+      return bits[0] === 1 ? unsigned - 256 : unsigned;
+    }
+
+    function tcFlipBits(bits) { return bits.map(b => b ^ 1); }
+
+    function tcAddOneBits(bits) {
+      const result = [...bits];
+      let carry = 1;
+      for (let i = result.length - 1; i >= 0 && carry; i--) {
+        const sum = result[i] + carry;
+        result[i] = sum % 2;
+        carry = sum >= 2 ? 1 : 0;
+      }
+      return result;
+    }
+
+    function tcDiffBits(a, b) { return a.map((v, i) => v !== b[i]); }
+
+    function tcBuildCarrySteps(startDec) {
+      const POW = [128, 64, 32, 16, 8, 4, 2, 1];
+      const startBits = tcDecToBits(startDec);
+      const n = startBits.length;
+      const steps = [{
+        bits: [...startBits], highlight: -1, carryTarget: n - 1, arithmetic: null, label: "start",
+        desc: `We're computing ${startDec} + 1. Binary addition works right to left — the +1 enters ` +
+              `at the rightmost bit (the 1s place).`,
+      }];
+      let working = [...startBits];
+      let carry = 1;
+      for (let i = n - 1; i >= 0 && carry; i--) {
+        const before = working[i];
+        const sum = before + carry;
+        const writeBit = sum % 2;
+        const carryOut = sum >= 2 ? 1 : 0;
+        working = [...working];
+        working[i] = writeBit;
+        steps.push({
+          bits: [...working], highlight: i,
+          carryTarget: carryOut === 1 && i > 0 ? i - 1 : null,
+          arithmetic: { before, carryIn: carry, sum, writeBit, carryOut },
+          label: `bit worth ${POW[i]}`,
+          desc: before === 1
+            ? `This bit is 1 and the incoming carry is 1: 1 + 1 = "10" in binary — write 0 here, ` +
+              `and carry a 1 into the next bit to the left.`
+            : `This bit is 0 and the incoming carry is 1: 0 + 1 = 1 — write 1 here. There's nothing ` +
+              `left to carry, so the ripple stops.`,
+        });
+        carry = carryOut;
+      }
+      steps.push({
+        bits: [...working], highlight: -1, carryTarget: null, arithmetic: null, label: "done",
+        desc: `No carry left, so every bit further left stays the same. ${startDec} + 1 = ${tcBitsToDec(working)}.`,
+      });
+      return steps;
+    }
+
+    function tcBuildDivideSteps(startDec) {
+      const rows = [];
+      let q = startDec;
+      do {
+        const next = Math.floor(q / 2);
+        const rem = q % 2;
+        rows.push({ dividend: q, quotient: next, remainder: rem });
+        q = next;
+      } while (q > 0);
+      return rows;
+    }
+
+    function tcTheme(mode) {
+      const dark = mode === "dark";
+      return {
+        dark,
+        bg: dark ? "#0a0a0f" : "#f6f8fb",
+        cardBg: dark ? "#0f172a" : "#ffffff",
+        cardBorder: dark ? "#1e2d45" : "#dbe3ee",
+        text: dark ? "#e2e8f0" : "#1e293b",
+        heading: dark ? "#f0f6ff" : "#0f172a",
+        subtext: dark ? "#64748b" : "#5b6b82",
+        accent: dark ? "#38bdf8" : "#0284c7",
+        accentBg: dark ? "#0c2340" : "#e0f2fe",
+        accentBorder: dark ? "#1e4060" : "#bae3fb",
+        sign: dark ? "#f59e0b" : "#b45309",
+        signBg: dark ? "#3a2205" : "#fef3c7",
+        zeroText: dark ? "#475569" : "#94a3b8",
+        codeBg: dark ? "#060a12" : "#f1f5f9",
+        changed: dark ? "#34d399" : "#047857",
+        changedRing: dark ? "rgba(52,211,153,0.28)" : "rgba(4,120,87,0.16)",
+      };
+    }
+
+    function tcStyles(T) {
+      return {
+        wrapper: {
+          fontFamily: "'IBM Plex Mono', 'Fira Code', 'Courier New', monospace",
+          background: T.bg, color: T.text, minHeight: "100vh", padding: "2rem 1rem",
+          transition: "background .2s, color .2s",
+        },
+        container: { maxWidth: 860, margin: "0 auto" },
+        headerRow: {
+          display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+          borderBottom: `1px solid ${T.cardBorder}`, paddingBottom: "1.5rem", marginBottom: "2.5rem", gap: 16,
+        },
+        tag: {
+          display: "inline-block", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em",
+          color: T.accent, background: T.accentBg, border: `1px solid ${T.accentBorder}`,
+          borderRadius: 4, padding: "3px 10px", marginBottom: 12,
+        },
+        h1: { fontSize: "clamp(1.4rem,4vw,2rem)", fontWeight: 700, color: T.heading, margin: "0 0 8px" },
+        subtitle: { fontSize: 13, color: T.subtext, margin: 0, lineHeight: 1.6 },
+        themeBtn: {
+          flexShrink: 0, background: "transparent", border: `1px solid ${T.cardBorder}`,
+          borderRadius: 6, color: T.subtext, fontSize: 12, fontFamily: "inherit",
+          padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap",
+        },
+        section: { marginBottom: "2.5rem" },
+        sectionHead: {
+          display: "flex", alignItems: "center", gap: 10, marginBottom: 16,
+          fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: T.accent, textTransform: "uppercase",
+        },
+        sectionLine: { flex: 1, height: 1, background: T.cardBorder },
+        card: { background: T.cardBg, border: `1px solid ${T.cardBorder}`, borderRadius: 12, overflow: "hidden" },
+        prose: { padding: "18px 20px 0", fontSize: 13.5, lineHeight: 1.8, color: T.text, margin: 0 },
+        proseList: {
+          padding: "18px 20px 0", margin: 0, listStyle: "none",
+          display: "flex", flexDirection: "column", gap: 10,
+        },
+        proseListItem: {
+          fontSize: 13.5, lineHeight: 1.7, color: T.text,
+          paddingLeft: 20, position: "relative",
+        },
+        proseListBullet: { position: "absolute", left: 0, color: T.accent, fontWeight: 700 },
+        code: {
+          fontFamily: "inherit", fontSize: 12.5, background: T.codeBg,
+          border: `1px solid ${T.cardBorder}`, borderRadius: 4, padding: "2px 6px", color: T.accent,
+        },
+        placeRow: { display: "flex", gap: 6, padding: "16px 20px 20px" },
+        placeCell: (isOne, isSign) => ({
+          flex: 1, textAlign: "center", borderRadius: 8, padding: "8px 4px",
+          border: `1px solid ${isSign ? T.sign : isOne ? T.accentBorder : T.cardBorder}`,
+          background: isSign ? T.signBg : isOne ? T.accentBg : "transparent",
+        }),
+        placePow: (isSign) => ({ fontSize: 11, color: isSign ? T.sign : T.subtext, marginBottom: 4 }),
+        placeBit: (isOne, isSign) => ({
+          fontSize: 15, fontWeight: 700, color: isSign ? T.sign : isOne ? T.accent : T.zeroText,
+        }),
+        exponentRow: { display: "flex", gap: 6, padding: "14px 20px 0" },
+        exponentCell: {
+          flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+        },
+        exponentLabel: { fontSize: 13, fontWeight: 700, color: T.accent, fontFamily: "inherit" },
+        exponentSup: { fontSize: 10, verticalAlign: "super" },
+        exponentArrow: { fontSize: 13, color: T.accent, lineHeight: 1 },
+        convGrid: {
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0,
+        },
+        subcard: { padding: "18px 20px" },
+        subcardDivider: { borderLeft: `1px solid ${T.cardBorder}` },
+        subcardLabel: {
+          fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: T.accent, marginBottom: 14,
+        },
+        decimalRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 },
+        signToggle: (isNeg) => ({
+          fontFamily: "inherit", fontSize: 18, fontWeight: 700, width: 40, height: 40,
+          borderRadius: 8, cursor: "pointer",
+          border: `1px solid ${isNeg ? T.sign : T.accentBorder}`,
+          background: isNeg ? T.signBg : T.accentBg,
+          color: isNeg ? T.sign : T.accent,
+        }),
+        decimalInput: {
+          fontFamily: "inherit", fontSize: 20, width: 110, padding: "8px 10px",
+          borderRadius: 8, border: `1px solid ${T.cardBorder}`, background: T.bg, color: T.text,
+        },
+        decimalBig: { fontSize: 13, color: T.subtext },
+        decimalBigVal: (isNeg) => ({ fontWeight: 700, color: isNeg ? T.sign : T.accent, fontSize: 15 }),
+        bitsRow: { display: "flex", gap: 4, marginBottom: 8 },
+        bitCell: (isOne, isSign) => ({
+          fontFamily: "inherit", flex: 1, height: 44, fontSize: 17, fontWeight: 700,
+          borderRadius: 8, cursor: "pointer",
+          border: `1px solid ${isSign ? T.sign : isOne ? T.accentBorder : T.cardBorder}`,
+          background: isSign ? T.signBg : isOne ? T.accentBg : "transparent",
+          color: isSign ? T.sign : isOne ? T.accent : T.zeroText,
+        }),
+        placeLabelsRow: { display: "flex", gap: 4, marginBottom: 14 },
+        placeLabelSmall: (isSign) => ({
+          flex: 1, textAlign: "center", fontSize: 10, color: isSign ? T.sign : T.subtext,
+        }),
+        caption: { fontSize: 12, color: T.subtext, lineHeight: 1.7, margin: 0 },
+        captionDivider: {
+          fontSize: 12, color: T.subtext, lineHeight: 1.7, margin: 0,
+          padding: "0 20px 18px", borderTop: `1px solid ${T.cardBorder}`,
+        },
+        recipeBox: { padding: "6px 20px 18px", display: "flex", flexDirection: "column", gap: 40 },
+        recipeExample: { display: "flex", flexDirection: "column", gap: 20 },
+        recipeExampleLabel: {
+          fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: T.subtext,
+          textTransform: "uppercase", marginBottom: 2,
+        },
+        signCalloutRow: { display: "flex", gap: 4 },
+        signCalloutItem: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 },
+        signCalloutLabel: { fontSize: 10, color: T.sign, fontWeight: 700, whiteSpace: "nowrap" },
+        signCalloutArrow: { fontSize: 14, color: T.sign, lineHeight: 1 },
+        recipeStepBlock: { display: "flex", flexDirection: "column", gap: 8 },
+        recipeStepCaption: {
+          fontSize: 13, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase",
+          color: T.accent, textAlign: "center",
+        },
+        recipeStepValue: { fontSize: 13, fontWeight: 700, color: T.accent, textAlign: "right" },
+        recipeArrowWrap: {
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "2px 0",
+        },
+        recipeArrowGlyph: { fontSize: 20, color: T.accent, lineHeight: 1 },
+        recipeArrowLabel: {
+          fontSize: 13, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: T.accent,
+        },
+        stepperCard: {
+          border: `1px solid ${T.cardBorder}`, borderRadius: 10, padding: "16px 16px 14px",
+          display: "flex", flexDirection: "column", gap: 10, background: T.codeBg,
+        },
+        stepperTitle: {
+          fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: T.accent,
+        },
+        columnCalloutRow: { display: "flex", gap: 4 },
+        columnCalloutItem: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 },
+        columnCalloutLabel: {
+          fontSize: 10, color: T.sign, fontWeight: 700, whiteSpace: "nowrap", textAlign: "center",
+        },
+        columnCalloutArrow: { fontSize: 14, color: T.sign, lineHeight: 1 },
+        carryMathBox: {
+          display: "flex", alignItems: "baseline", justifyContent: "center", gap: 8,
+          padding: "10px 14px", borderRadius: 8, border: `1px solid ${T.cardBorder}`,
+          background: T.cardBg, fontSize: 18, fontWeight: 800,
+        },
+        carryMathTerm: { color: T.text },
+        carryMathOp: { color: T.subtext, fontSize: 14, fontWeight: 400 },
+        carryMathResult: { color: T.sign },
+        carryMathSub: { fontSize: 12, color: T.subtext, textAlign: "center" },
+        stepperValue: { fontSize: 13, fontWeight: 700, color: T.accent, textAlign: "right" },
+        stepperDesc: { fontSize: 13, lineHeight: 1.7, color: T.text, margin: 0, minHeight: 44 },
+        stepperNav: { display: "flex", alignItems: "center", gap: 12, marginTop: 4 },
+        stepperBtn: {
+          background: "transparent", border: `1px solid ${T.accentBorder}`, borderRadius: 6, color: T.accent,
+          fontSize: 12, fontFamily: "inherit", padding: "6px 14px", cursor: "pointer", whiteSpace: "nowrap",
+        },
+        stepperBtnDisabled: { opacity: 0.35, cursor: "not-allowed" },
+        stepperProgress: { flex: 1, height: 3, background: T.cardBorder, borderRadius: 3, overflow: "hidden" },
+        stepperProgressFill: { height: "100%", background: T.accent, borderRadius: 3, transition: "width .3s" },
+        stepperBadge: {
+          fontSize: 11, color: T.subtext, border: `1px solid ${T.cardBorder}`, borderRadius: 99,
+          padding: "3px 10px", whiteSpace: "nowrap",
+        },
+        bitCellStatic: (isOne, isSign, changed) => ({
+          fontFamily: "inherit", flex: 1, height: 44, fontSize: 17, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8,
+          border: `2px solid ${changed ? T.changed : isSign ? T.sign : isOne ? T.accentBorder : T.cardBorder}`,
+          background: isSign ? T.signBg : isOne ? T.accentBg : "transparent",
+          color: isSign ? T.sign : isOne ? T.accent : T.zeroText,
+          boxShadow: changed ? `0 0 0 3px ${T.changedRing}` : "none",
+          transition: "border-color .25s, box-shadow .25s",
+        }),
+        bitCellUnknown: {
+          fontFamily: "inherit", flex: 1, height: 44, fontSize: 17, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8,
+          border: `2px dashed ${T.cardBorder}`, color: T.subtext, background: "transparent",
+        },
+        divideMathBox: {
+          display: "flex", flexDirection: "column", gap: 10, padding: "12px 16px",
+          borderRadius: 8, border: `1px solid ${T.cardBorder}`, background: T.cardBg,
+        },
+        divideMathReal: { fontSize: 17, fontWeight: 800, color: T.text, textAlign: "center" },
+        divideMathBreakdown: { display: "flex", flexDirection: "column", gap: 6 },
+        divideMathRow: {
+          display: "flex", alignItems: "center", gap: 8, fontSize: 12.5,
+          padding: "6px 10px", borderRadius: 6, background: T.codeBg,
+        },
+        divideMathLabel: { color: T.subtext, flexShrink: 0, minWidth: 110 },
+        divideMathValue: { color: T.accent, fontWeight: 800, fontSize: 14 },
+        divideMathHint: { color: T.subtext, marginLeft: "auto", fontSize: 11, whiteSpace: "nowrap" },
+        divideMathWrite: {
+          textAlign: "center", fontSize: 14, fontWeight: 800, color: T.sign,
+          paddingTop: 6, borderTop: `1px dashed ${T.cardBorder}`,
+        },
+      };
+    }
+
+    function TcSectionHead({ S, children }) {
+      return (
+        <div style={S.sectionHead}>
+          <span>{children}</span>
+          <div style={S.sectionLine} />
+        </div>
+      );
+    }
+
+    function TcExponentRow({ S }) {
+      const EXP = [7, 6, 5, 4, 3, 2, 1, 0];
+      return (
+        <div style={S.exponentRow}>
+          {EXP.map((e, i) => (
+            <div key={i} style={S.exponentCell}>
+              <div style={S.exponentLabel}>2<span style={S.exponentSup}>{e}</span></div>
+              <div style={S.exponentArrow}>↓</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function TcPlaceValueRow({ S, bits }) {
+      const POW = [128, 64, 32, 16, 8, 4, 2, 1];
+      return (
+        <div style={S.placeRow}>
+          {POW.map((p, i) => {
+            const isOne = bits[i] === 1;
+            return (
+              <div key={i} style={S.placeCell(isOne, false)}>
+                <div style={S.placePow(false)}>{p}</div>
+                <div style={S.placeBit(isOne, false)}>{bits[i]}</div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    const TC_INTRO_EXAMPLES = [
+      { bits: [0, 0, 0, 0, 0, 1, 0, 1], terms: "4 + 1", dec: 5 },
+      { bits: [1, 0, 1, 1, 0, 1, 0, 1], terms: "128 + 32 + 16 + 4 + 1", dec: 181 },
+    ];
+
+    function BinaryIntro({ S }) {
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>What is binary?</TcSectionHead>
+          <div style={S.card}>
+            <ul style={S.proseList}>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Binary is base-2: every number is written using only <strong>0</strong> and <strong>1</strong>.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Each position is worth a power of two instead of a power of ten — reading left to right:
+                128, 64, 32, 16, 8, 4, 2, 1.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                To get the decimal value: add up the place values wherever there's a 1.
+              </li>
+            </ul>
+            {TC_INTRO_EXAMPLES.map((ex, i) => (
+              <React.Fragment key={i}>
+                <p style={S.prose}>
+                  Example: <code style={S.code}>{ex.bits.join("")}</code> = {ex.terms} = <strong>{ex.dec}</strong>.
+                </p>
+                {i === 0 && <TcExponentRow S={S} />}
+                <TcPlaceValueRow S={S} bits={ex.bits} />
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function BinaryDecimalConverter({ S }) {
+      const [value, setValue] = useState(5);
+      const bits = tcDecToBits(value);
+      const isNeg = value < 0;
+      const magnitude = Math.abs(value);
+      const maxMagnitude = isNeg ? 128 : 127;
+
+      const onToggleSign = () => setValue(v => tcClamp(-v, -128, 127));
+      const onMagnitudeChange = (e) => {
+        const raw = parseInt(e.target.value, 10);
+        const m = tcClamp(Number.isNaN(raw) ? 0 : raw, 0, maxMagnitude);
+        setValue(isNeg ? -m : m);
+      };
+      const onBitToggle = (i) => {
+        const nextBits = [...bits];
+        nextBits[i] ^= 1;
+        setValue(tcBitsToDec(nextBits));
+      };
+
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>Decimal ↔ binary (8-bit)</TcSectionHead>
+          <div style={S.card}>
+            <div style={S.convGrid}>
+              <div style={S.subcard}>
+                <div style={S.subcardLabel}>DECIMAL</div>
+                <div style={S.decimalRow}>
+                  <button style={S.signToggle(isNeg)} onClick={onToggleSign} aria-label="toggle sign">
+                    {isNeg ? "−" : "+"}
+                  </button>
+                  <input
+                    type="number" min={0} max={maxMagnitude} value={magnitude}
+                    onChange={onMagnitudeChange} style={S.decimalInput}
+                  />
+                </div>
+                <div style={S.decimalBig}>value = <span style={S.decimalBigVal(isNeg)}>{value}</span></div>
+              </div>
+              <div style={{ ...S.subcard, ...S.subcardDivider }}>
+                <div style={S.subcardLabel}>BINARY (two's complement)</div>
+                <div style={S.bitsRow}>
+                  {bits.map((b, i) => (
+                    <button key={i} style={S.bitCell(b === 1, i === 0)} onClick={() => onBitToggle(i)}>
+                      {b}
+                    </button>
+                  ))}
+                </div>
+                <div style={S.placeLabelsRow}>
+                  {[128, 64, 32, 16, 8, 4, 2, 1].map((p, i) => (
+                    <div key={i} style={S.placeLabelSmall(i === 0)}>{i === 0 ? `−${p}` : p}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p style={S.captionDivider}>
+              Type a magnitude and flip the +/− toggle, or click any bit directly — both sides stay in sync.
+              The leftmost bit is the <strong>sign bit</strong>; flipping it swings the value by −128.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function TcBitsDisplay({ S, bits, changed, markSign = true }) {
+      return (
+        <div style={S.bitsRow}>
+          {bits.map((b, i) => (
+            <div key={i} style={S.bitCellStatic(b === 1, markSign && i === 0, changed ? changed[i] : false)}>
+              {b}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function TcSignCallout({ S }) {
+      return (
+        <div style={S.signCalloutRow}>
+          <div style={S.signCalloutItem}>
+            <span style={S.signCalloutLabel}>sign bit</span>
+            <span style={S.signCalloutArrow}>↓</span>
+          </div>
+          {Array.from({ length: 7 }).map((_, i) => <div key={i} style={{ flex: 1 }} />)}
+        </div>
+      );
+    }
+
+    function TcColumnCallout({ S, index, count = 8, children }) {
+      return (
+        <div style={S.columnCalloutRow}>
+          {Array.from({ length: count }).map((_, i) => (
+            i === index ? (
+              <div key={i} style={S.columnCalloutItem}>
+                <span style={S.columnCalloutLabel}>{children}</span>
+                <span style={S.columnCalloutArrow}>↓</span>
+              </div>
+            ) : <div key={i} style={{ flex: 1 }} />
+          ))}
+        </div>
+      );
+    }
+
+    function TcCarryMath({ S, arithmetic }) {
+      const { before, carryIn, sum, writeBit, carryOut } = arithmetic;
+      return (
+        <div>
+          <div style={S.carryMathBox}>
+            <span style={S.carryMathTerm}>{before}</span>
+            <span style={S.carryMathOp}>+</span>
+            <span style={S.carryMathTerm}>{carryIn}</span>
+            <span style={S.carryMathOp}>=</span>
+            <span style={S.carryMathResult}>{sum === 2 ? "10" : sum}</span>
+          </div>
+          <div style={S.carryMathSub}>write <strong>{writeBit}</strong>, carry <strong>{carryOut}</strong></div>
+        </div>
+      );
+    }
+
+    function TcStepArrow({ S, children }) {
+      return (
+        <div style={S.recipeArrowWrap}>
+          <span style={S.recipeArrowGlyph}>↓</span>
+          <span style={S.recipeArrowLabel}>{children}</span>
+        </div>
+      );
+    }
+
+    function TcRecipeExample({ S, label, startDec, showSignCallout }) {
+      const startBits = tcDecToBits(startDec);
+      const flippedBits = tcFlipBits(startBits);
+      const resultBits = tcAddOneBits(flippedBits);
+      const resultDec = tcBitsToDec(resultBits);
+      const flipChanged = tcDiffBits(startBits, flippedBits);
+      const addChanged = tcDiffBits(flippedBits, resultBits);
+
+      return (
+        <div style={S.recipeExample}>
+          <div style={S.recipeExampleLabel}>{label}</div>
+          {showSignCallout && <TcSignCallout S={S} />}
+          <div style={S.recipeStepBlock}>
+            <div style={S.recipeStepCaption}>start</div>
+            <TcBitsDisplay S={S} bits={startBits} />
+            <div style={S.recipeStepValue}>= {startDec}</div>
+          </div>
+          <TcStepArrow S={S}>flip every bit (0↔1)</TcStepArrow>
+          <div style={S.recipeStepBlock}>
+            <TcBitsDisplay S={S} bits={flippedBits} changed={flipChanged} />
+          </div>
+          <TcStepArrow S={S}>add 1</TcStepArrow>
+          <div style={S.recipeStepBlock}>
+            <TcBitsDisplay S={S} bits={resultBits} changed={addChanged} />
+            <div style={S.recipeStepValue}>= {resultDec}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function TcAddOneExample({ S, label, startDec }) {
+      const startBits = tcDecToBits(startDec);
+      const resultBits = tcAddOneBits(startBits);
+      const changed = tcDiffBits(startBits, resultBits);
+      const resultDec = tcBitsToDec(resultBits);
+
+      return (
+        <div style={S.recipeExample}>
+          <div style={S.recipeExampleLabel}>{label}</div>
+          <div style={S.recipeStepBlock}>
+            <div style={S.recipeStepCaption}>start</div>
+            <TcBitsDisplay S={S} bits={startBits} markSign={false} />
+            <div style={S.recipeStepValue}>= {startDec}</div>
+          </div>
+          <TcStepArrow S={S}>add 1</TcStepArrow>
+          <div style={S.recipeStepBlock}>
+            <TcBitsDisplay S={S} bits={resultBits} changed={changed} markSign={false} />
+            <div style={S.recipeStepValue}>= {resultDec}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function TwosComplementExplainer({ S }) {
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>What is two's complement? (ELI5)</TcSectionHead>
+          <div style={S.card}>
+            <ul style={S.proseList}>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Computers only have 0s and 1s — there's no minus sign to write down. Two's complement is
+                the trick that lets a normal-looking bit pattern <em>mean</em> a negative number.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Think of an odometer that can't show negative miles: roll it back past 0 and it wraps
+                around to the highest number instead. Two's complement is that same wraparound, in binary.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                The recipe for <strong>−n</strong>: write +n in binary, <strong>flip every bit</strong> (0↔1),
+                then <strong>add 1</strong>. Whatever pattern you land on is −n.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                That's why the leftmost bit is the <strong>sign bit</strong> — the same one you toggled in
+                the converter above. When it's 1, that position counts as <strong>−128</strong> instead of +128.
+              </li>
+            </ul>
+          </div>
+        </div>
+      );
+    }
+
+    function AddOneCarryStepper({ S, startDec }) {
+      const steps = tcBuildCarrySteps(startDec);
+      const [cur, setCur] = useState(0);
+      const step = steps[cur];
+      const changed = step.bits.map((_, i) => i === step.highlight);
+      const title = step.label === "start" ? "Start" : step.label === "done" ? "Done" : `Processing the ${step.label}`;
+
+      return (
+        <div style={S.stepperCard}>
+          <div style={S.stepperTitle}>{title}</div>
+          {step.carryTarget != null && (
+            <TcColumnCallout S={S} index={step.carryTarget}>
+              {step.label === "start" ? "+1 enters" : "carry → here"}
+            </TcColumnCallout>
+          )}
+          <TcBitsDisplay S={S} bits={step.bits} changed={changed} markSign={false} />
+          <div style={S.stepperValue}>= {tcBitsToDec(step.bits)}</div>
+          {step.arithmetic && <TcCarryMath S={S} arithmetic={step.arithmetic} />}
+          <p style={S.stepperDesc}>{step.desc}</p>
+          <div style={S.stepperNav}>
+            <button
+              style={{ ...S.stepperBtn, ...(cur === 0 ? S.stepperBtnDisabled : {}) }}
+              onClick={() => setCur(c => Math.max(0, c - 1))} disabled={cur === 0}
+            >
+              ← prev
+            </button>
+            <div style={S.stepperProgress}>
+              <div style={{ ...S.stepperProgressFill, width: `${(cur + 1) / steps.length * 100}%` }} />
+            </div>
+            <span style={S.stepperBadge}>{cur + 1} / {steps.length}</span>
+            <button
+              style={{ ...S.stepperBtn, ...(cur === steps.length - 1 ? S.stepperBtnDisabled : {}) }}
+              onClick={() => setCur(c => Math.min(steps.length - 1, c + 1))} disabled={cur === steps.length - 1}
+            >
+              next →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function AddOneExplainer({ S }) {
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>What happens when we add 1? (carrying)</TcSectionHead>
+          <div style={S.card}>
+            <ul style={S.proseList}>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Just like decimal addition carries once a column passes 9 (9 + 1 = 10, carry the 1),
+                binary carries too — it just takes far less: a bit only holds 0 or 1.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                If a bit is already <strong>1</strong> and you add 1 to it, it flips to <strong>0</strong> and
+                carries a 1 into the next position to the left.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                That next position does the same check: if it's also a 1, it flips to 0 and passes the
+                carry along again. The ripple stops as soon as it lands on a <strong>0</strong>, which
+                simply flips to 1 and absorbs it.
+              </li>
+            </ul>
+            <div style={S.recipeBox}>
+              <TcAddOneExample S={S} label="Example 1 — no carry" startDec={2} />
+              <div style={S.recipeExample}>
+                <div style={S.recipeExampleLabel}>Example 2 — step through the carry</div>
+                <AddOneCarryStepper S={S} startDec={15} />
+              </div>
+            </div>
+            <p style={S.captionDivider}>
+              This is exactly the "add 1" step from the two's complement recipe — the ripple can touch
+              several bits, not just the last one. Use the buttons above to walk through it one bit at a time.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function TwosComplementExamples({ S }) {
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>Two's complement — worked examples</TcSectionHead>
+          <div style={S.card}>
+            <div style={S.recipeBox}>
+              <TcRecipeExample S={S} label="Example 1 — positive → negative" startDec={5} showSignCallout />
+              <TcRecipeExample S={S} label="Example 2 — negative → positive (same trick, reversed)" startDec={-5} />
+              <TcRecipeExample S={S} label="Example 3 — a bigger magnitude" startDec={18} />
+            </div>
+            <p style={S.captionDivider}>
+              Highlighted boxes show exactly which bits changed in that step. Notice example 2 undoes
+              example 1 — flip-and-add-1 is its own reverse, so applying it twice gets you back to start.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function TwosComplement() {
+      const [mode, setMode] = useState("light");
+      const T = tcTheme(mode);
+      const S = tcStyles(T);
+      return (
+        <div style={S.wrapper}>
+          <div style={S.container}>
+            <div style={S.headerRow}>
+              <div>
+                <div style={S.tag}>BINARY · REFRESHER</div>
+                <h1 style={S.h1}>Two's Complement</h1>
+                <p style={S.subtitle}>Warm-up: reading binary as decimal, and back again — before signed integers.</p>
+              </div>
+              <button style={S.themeBtn} onClick={() => setMode(m => m === "dark" ? "light" : "dark")}>
+                {mode === "dark" ? "☀ light" : "🌙 dark"}
+              </button>
+            </div>
+            <BinaryIntro S={S} />
+            <BinaryDecimalConverter S={S} />
+            <TwosComplementExplainer S={S} />
+            <AddOneExplainer S={S} />
+            <TwosComplementExamples S={S} />
+          </div>
+        </div>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // VISUALIZER 4 — Decimal → Binary (divide-by-2 method)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    function TcDivideBitsDisplay({ S, bits }) {
+      return (
+        <div style={S.bitsRow}>
+          {bits.map((b, i) => (
+            b === null
+              ? <div key={i} style={S.bitCellUnknown}>·</div>
+              : <div key={i} style={S.bitCellStatic(b === 1, false, false)}>{b}</div>
+          ))}
+        </div>
+      );
+    }
+
+    function TcDivideMath({ S, row }) {
+      const real = row.dividend / 2;
+      const isOdd = row.remainder === 1;
+      return (
+        <div style={S.divideMathBox}>
+          <div style={S.divideMathReal}>{row.dividend} ÷ 2 = {real}</div>
+          <div style={S.divideMathBreakdown}>
+            <div style={S.divideMathRow}>
+              <span style={S.divideMathLabel}>whole number part</span>
+              <span style={S.divideMathValue}>{row.quotient}</span>
+              <span style={S.divideMathHint}>→ next quotient</span>
+            </div>
+            <div style={S.divideMathRow}>
+              <span style={S.divideMathLabel}>{isOdd ? "leftover (the .5)" : "leftover"}</span>
+              <span style={S.divideMathValue}>{row.remainder}</span>
+              <span style={S.divideMathHint}>→ remainder</span>
+            </div>
+          </div>
+          <div style={S.divideMathWrite}>so we write: {row.remainder}</div>
+        </div>
+      );
+    }
+
+    function DivideBy2Stepper({ S, startDec }) {
+      const rows = tcBuildDivideSteps(startDec);
+      const n = rows.length;
+      const totalSteps = n + 2; // start + one per division row + done
+      const [cur, setCur] = useState(0);
+
+      const revealed = Math.max(0, Math.min(n, cur));
+      const bits = Array.from({ length: n }, () => null);
+      for (let r = 0; r < revealed; r++) bits[n - 1 - r] = rows[r].remainder;
+
+      let title, desc, row = null, calloutIndex = null;
+      if (cur === 0) {
+        title = "Start";
+        desc = `To convert ${startDec} to binary: divide by 2, write down the remainder, and repeat with ` +
+               `the quotient until it reaches 0.`;
+      } else if (cur <= n) {
+        row = rows[cur - 1];
+        calloutIndex = n - cur;
+        title = `Step ${cur} of ${n}`;
+        desc = row.remainder === 1
+          ? `${row.dividend} ÷ 2 = ${row.dividend / 2}. It doesn't split evenly into two whole groups — ` +
+            `${row.dividend} is odd, so there's always exactly 1 left over. That leftover is the remainder.`
+          : `${row.dividend} ÷ 2 = ${row.dividend / 2}. It splits evenly into two whole groups — ` +
+            `${row.dividend} is even, so nothing is left over. The remainder is 0.`;
+        if (row.quotient === 0) desc += " The quotient just hit 0 — we're done dividing.";
+      } else {
+        title = "Done";
+        desc = `Quotient reached 0. Reading the remainders bottom-to-top gives ` +
+               `${bits.join("")} = ${startDec}.`;
+      }
+
+      return (
+        <div style={S.stepperCard}>
+          <div style={S.stepperTitle}>{title}</div>
+          {calloutIndex !== null && (
+            <TcColumnCallout S={S} index={calloutIndex} count={n}>remainder → here</TcColumnCallout>
+          )}
+          <TcDivideBitsDisplay S={S} bits={bits} />
+          {row && <TcDivideMath S={S} row={row} />}
+          <p style={S.stepperDesc}>{desc}</p>
+          <div style={S.stepperNav}>
+            <button
+              style={{ ...S.stepperBtn, ...(cur === 0 ? S.stepperBtnDisabled : {}) }}
+              onClick={() => setCur(c => Math.max(0, c - 1))} disabled={cur === 0}
+            >
+              ← prev
+            </button>
+            <div style={S.stepperProgress}>
+              <div style={{ ...S.stepperProgressFill, width: `${(cur + 1) / totalSteps * 100}%` }} />
+            </div>
+            <span style={S.stepperBadge}>{cur + 1} / {totalSteps}</span>
+            <button
+              style={{ ...S.stepperBtn, ...(cur === totalSteps - 1 ? S.stepperBtnDisabled : {}) }}
+              onClick={() => setCur(c => Math.min(totalSteps - 1, c + 1))} disabled={cur === totalSteps - 1}
+            >
+              next →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function DivideByTwoExplainer({ S }) {
+      return (
+        <div style={S.section}>
+          <TcSectionHead S={S}>Decimal → binary: divide by 2</TcSectionHead>
+          <div style={S.card}>
+            <ul style={S.proseList}>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                This is the reverse of "What is binary?" above — there we added place values to get a
+                decimal number; here we divide to build the binary back up.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Divide the number by 2. Write down the <strong>remainder</strong> (always 0 or 1) — that's
+                one bit.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Keep dividing the <strong>quotient</strong> by 2, the same way, until the quotient reaches 0.
+              </li>
+              <li style={S.proseListItem}>
+                <span style={S.proseListBullet}>›</span>
+                Read the remainders from the <strong>last one back to the first</strong> (bottom to top) —
+                that sequence is the binary number.
+              </li>
+            </ul>
+            <div style={S.recipeBox}>
+              <div style={S.recipeExample}>
+                <div style={S.recipeExampleLabel}>Example — converting 41</div>
+                <DivideBy2Stepper S={S} startDec={41} />
+              </div>
+            </div>
+            <p style={S.captionDivider}>
+              Use the buttons above to walk through each division one step at a time and watch the bits
+              fill in from right (first remainder) to left (last remainder).
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function DecimalToBinary() {
+      const [mode, setMode] = useState("light");
+      const T = tcTheme(mode);
+      const S = tcStyles(T);
+      return (
+        <div style={S.wrapper}>
+          <div style={S.container}>
+            <div style={S.headerRow}>
+              <div>
+                <div style={S.tag}>BINARY · CONVERSION</div>
+                <h1 style={S.h1}>Decimal → Binary</h1>
+                <p style={S.subtitle}>Converting a decimal number into binary using the divide-by-2 method.</p>
+              </div>
+              <button style={S.themeBtn} onClick={() => setMode(m => m === "dark" ? "light" : "dark")}>
+                {mode === "dark" ? "☀ light" : "🌙 dark"}
+              </button>
+            </div>
+            <BinaryIntro S={S} />
+            <DivideByTwoExplainer S={S} />
           </div>
         </div>
       );
